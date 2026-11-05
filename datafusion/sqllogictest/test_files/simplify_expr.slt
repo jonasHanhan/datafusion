@@ -1099,3 +1099,35 @@ drop table cast_preimage_tz;
 
 statement ok
 drop table cast_preimage_tz_ms;
+
+# Regex matching a literal backslash must not be rewritten into LIKE,
+# since `\` is the LIKE escape character
+# https://github.com/apache/datafusion/issues/27120
+statement ok
+create table regex_backslash(id int, s string) as values (1, 'a\b'), (2, 'ab');
+
+query IBBBB
+select
+  id,
+  s ~ ('a' || chr(92) || chr(92) || 'b'),
+  s ~ ('^a' || chr(92) || chr(92)),
+  s ~ (chr(92) || chr(92) || 'b$'),
+  s ~* ('^a' || chr(92) || chr(92) || 'b$')
+from regex_backslash
+order by id;
+----
+1 true true true true
+2 false false false false
+
+query TT
+explain select s from regex_backslash where s ~ ('a' || chr(92) || chr(92) || 'b')
+----
+logical_plan
+01)Filter: regex_backslash.s ~ Utf8View("a\\b")
+02)--TableScan: regex_backslash projection=[s]
+physical_plan
+01)FilterExec: s@0 ~ a\\b
+02)--DataSourceExec: partitions=1, partition_sizes=[1]
+
+statement ok
+drop table regex_backslash;
